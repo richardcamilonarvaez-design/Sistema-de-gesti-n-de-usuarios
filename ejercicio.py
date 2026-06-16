@@ -2,8 +2,44 @@ import csv
 from datetime import datetime  # Necesario para registrar fecha y hora
 import os
 
-ARCHIVO = "usuarios.csv"
-ARCHIVO_ERRORES = "errores.csv"  # Archivo solicitado para los datos corruptos
+
+def validar_linea_usuario(fila, num_linea, usuarios_buenos):
+    if len(fila) < 2:
+        contenido_crudo = "".join(fila) if fila else "[Linea Vacia]"
+        return False, f"Estructura invalida (Faltan campos o comas en linea {num_linea})"
+
+    nombre = fila[0].strip()
+    edad_str = fila[1].strip()
+
+    if nombre == "":
+        return False, "Nombre vacio"
+    
+    if not all(c.isalpha() or c.isspace() for c in nombre):
+        return False, "Nombre contiene caracteres invalidos (numeros o simbolos)"
+
+    try:
+        edad = int(edad_str)
+        if edad < 0 or edad > 120:
+            return False, f"Edad fuera de rango (0-120): {edad_str}"
+    except ValueError:
+        return False, f"Edad no es un numero entero: '{edad_str}'"
+
+    for u in usuarios_buenos:
+        if u["nombre"].lower() == nombre.lower():
+            return False, f"Usuario duplicado: '{nombre}' ya existe en la lista"
+
+    fecha = (
+        fila[2].strip()
+        if len(fila) > 2
+        else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    usuario = {
+        "nombre": nombre.title(),
+        "edad": edad,
+        "fecha": fecha
+    }
+    return True, usuario
 
 
 def registrar_usuario(usuarios):
@@ -18,7 +54,6 @@ def registrar_usuario(usuarios):
         print("Error: El nombre solo debe contener letras.")
         return
 
-    # NUEVO REQUERIMIENTO: Evitar usuarios duplicados en el momento del registro
     for u in usuarios:
         if u["nombre"].lower() == nombre.lower():
             print(f"Error: El usuario '{nombre}' ya existe en el sistema.")
@@ -26,15 +61,16 @@ def registrar_usuario(usuarios):
 
     try:
         edad = int(input("Ingrese la edad: "))
+        if edad < 0 or edad > 120:
+            print("Error: La edad debe estar en un rango logico (0-120).")
+            return
 
-        # NUEVO REQUERIMIENTO: Registrar fecha y hora de creación
-        # Formato resultante: "AAAA-MM-DD HH:MM:SS" (ej: 2026-06-10 21:30:15)
         fecha_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         usuario = {
             "nombre": nombre.title(),
             "edad": edad,
-            "fecha": fecha_registro,  # Se agrega al diccionario
+            "fecha": fecha_registro,
         }
 
         usuarios.append(usuario)
@@ -51,13 +87,11 @@ def mostrar_usuarios(usuarios):
 
     print("\n--- USUARIOS EN MEMORIA ---")
     for i, usuario in enumerate(usuarios, start=1):
-        # Mostramos también la fecha registrada
         print(
-            f"{i}. Nombre: {usuario['nombre']} | Edad: {usuario['edad']} | Creado: {usuario['fecha']}"
+            f"{i}. Nombre: {usuario['nombre']:<15} | Edad: {usuario['edad']:<3} | Creado: {usuario['fecha']}"
         )
 
 
-# NUEVO REQUERIMIENTO: Buscar usuarios por nombre
 def buscar_usuario(usuarios):
     print("\n--- BUSCAR USUARIOS ---")
     if len(usuarios) == 0:
@@ -81,139 +115,169 @@ def buscar_usuario(usuarios):
             print(f"• {u['nombre']} | Edad: {u['edad']} | Registro: {u['fecha']}")
 
 
-# NUEVO REQUERIMIENTO: Validar un archivo al leerlo y separar datos buenos de malos
-def validar_y_cargar_desde_archivo():
-    usuarios_buenos = []
+def gestionar_memoria(usuarios):
+    """
+    Submenu para ordenar o eliminar registros activos en la memoria.
+    """
+    if len(usuarios) == 0:
+        print("\nNo hay usuarios en memoria para modificar u ordenar.")
+        return
+
+    print("\n--- GESTIONAR MEMORIA (ORDENAR / ELIMINAR) ---")
+    print("1. Ordenar usuarios por edad (Menor a Mayor)")
+    print("2. Ordenar usuarios por edad (Mayor a Menor)")
+    print("3. Eliminar un usuario por nombre exacto")
+    print("4. Volver al menú principal")
+    
+    subopcion = input("Seleccione una opción de gestión: ").strip()
+
+    if subopcion == "1":
+        usuarios.sort(key=lambda x: x["edad"])
+        print("Usuarios ordenados por edad de menor a mayor con éxito. Usa la opción 2 para verlos.")
+        
+    elif subopcion == "2":
+        usuarios.sort(key=lambda x: x["edad"], reverse=True)
+        print("Usuarios ordenados por edad de mayor a menor con éxito. Usa la opción 2 para verlos.")
+        
+    elif subopcion == "3":
+        nombre_eliminar = input("Ingrese el nombre exacto del usuario a eliminar: ").strip().lower()
+        inicial_len = len(usuarios)
+        
+        # Filtrado defensivo: mantiene solo los que NO coinciden con el nombre ingresado
+        usuarios[:] = [u for u in usuarios if u["nombre"].lower() != nombre_eliminar]
+        
+        # CORREGIDO: Se unifico el nombre de la variable de control a 'inicial_len'
+        if len(usuarios) < inicial_len:
+            print(f"Eliminación exitosa: El usuario fue removido de la memoria actual.")
+        else:
+            print("No se encontró ningún usuario con ese nombre exacto.")
+            
+    elif subopcion == "4":
+        return
+    else:
+        print("Opción inválida en el submenú.")
+
+
+def calcular_edad_promedio(usuarios):
+    """
+    NUEVA FUNCIÓN: Calcula y muestra la media aritmética de las edades 
+    de los usuarios cargados actualmente en memoria.
+    """
+    print("\n--- CALCULAR EDAD PROMEDIO ---")
+    if len(usuarios) == 0:
+        print("No hay usuarios en memoria para realizar el cálculo.")
+        return
+
+    # Sumatoria de todas las edades acumuladas
+    suma_edades = sum(u["edad"] for u in usuarios)
+    total_usuarios = len(usuarios)
+    promedio = suma_edades / total_usuarios
+
+    print(f"Estadísticas actuales:")
+    print(f"  • Total de usuarios analizados: {total_usuarios}")
+    print(f"  • Edad promedio: {promedio:.2f} años")
+
+
+def cargar_y_segregar_archivo(usuarios_actuales):
+    """
+    Carga un archivo, aplica la validacion defensiva y escribe de forma
+    inmediata dos archivos basados en el nombre original: _correctos y _errores.
+    """
+    print("\n--- CARGAR Y VALIDAR ARCHIVO EXTERNO ---")
+    nombre_archivo = input("Ingrese el nombre o ruta del archivo .txt a cargar: ").strip()
+
+    if not os.path.exists(nombre_archivo):
+        print(f"Error: El archivo '{nombre_archivo}' no existe en el directorio.")
+        return
+
+    nombre_base, extension = os.path.splitext(nombre_archivo)
+    ruta_correctos = f"{nombre_base}_correctos{extension}"
+    ruta_errores = f"{nombre_base}_errores{extension}"
+
+    usuarios_buenos_carga = []
     errores_detectados = []
 
-    if not os.path.exists(ARCHIVO):
-        # Si el archivo no existe, devolvemos datos iniciales limpios por defecto
-        print(
-            f"El archivo '{ARCHIVO}' no existe. Iniciando con base de datos limpia."
-        )
-        return [
-            {
-                "nombre": "Carlos",
-                "edad": 25,
-                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-            {
-                "nombre": "Ana",
-                "edad": 30,
-                "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            },
-        ]
-
-    print(f"\n--- VALIDANDO Y LEYENDO ARCHIVO '{ARCHIVO}' ---")
+    print(f"\n--- PROCESANDO Y AUDITANDO: '{nombre_archivo}' ---")
     try:
-        with open(ARCHIVO, "r", newline="", encoding="utf-8") as archivo:
+        with open(nombre_archivo, "r", newline="", encoding="utf-8") as archivo:
             lector = csv.reader(archivo)
-            for fila in lector:
-                if not fila:
-                    continue  # Saltar líneas vacías
+            for num_linea, fila in enumerate(lector, start=1):
+                if not fila or len(fila) == 0 or (len(fila) == 1 and fila[0].strip() == ""):
+                    continue 
 
-                # Estructura esperada en el CSV: nombre, edad, fecha
-                nombre = fila[0].strip()
-                edad_str = fila[1].strip()
-                # Si el archivo viejo no tiene fecha, le asignamos la actual por defecto
-                fecha = (
-                    fila[2].strip()
-                    if len(fila) > 2
-                    else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                )
+                es_valido, resultado = validar_linea_usuario(fila, num_linea, usuarios_buenos_carga)
 
-                fila_con_error = False
-                motivo_error = ""
-
-                # Validaciones de la fila
-                if nombre == "":
-                    fila_con_error = True
-                    motivo_error = "Nombre vacío"
-                elif not all(c.isalpha() or c.isspace() for c in nombre):
-                    fila_con_error = True
-                    motivo_error = "Nombre contiene caracteres inválidos"
-
-                try:
-                    edad = int(edad_str)
-                    if edad < 0 or edad > 120:
-                        fila_con_error = True
-                        motivo_error = "Edad fuera de rango (0-120)"
-                except ValueError:
-                    fila_con_error = True
-                    motivo_error = "Edad no es un número entero"
-
-                # Verificar duplicados en lo que ya se aceptó como bueno
-                for u in usuarios_buenos:
-                    if u["nombre"].lower() == nombre.lower():
-                        fila_con_error = True
-                        motivo_error = "Usuario duplicado en archivo"
-
-                # Clasificación de datos
-                if fila_con_error:
-                    errores_detectados.append([nombre, edad_str, motivo_error])
+                if es_valido:
+                    usuarios_buenos_carga.append(resultado)
                 else:
-                    usuarios_buenos.append(
-                        {"nombre": nombre.title(), "edad": edad, "fecha": fecha}
-                    )
+                    nombre_error = fila[0].strip() if len(fila) > 0 else "[Vacio]"
+                    edad_error = fila[1].strip() if len(fila) > 1 else "N/A"
+                    errores_detectados.append([nombre_error, edad_error, resultado])
 
-        # Si se encontraron errores, creamos el archivo de errores separado
-        if errores_detectados:
-            print(
-                f"⚠️ Se encontraron {len(errores_detectados)} filas corruptas."
-            )
-            with open(
-                ARCHIVO_ERRORES, "w", newline="", encoding="utf-8"
-            ) as archivo_err:
-                escritor_err = csv.writer(archivo_err)
-                # Guardamos: Nombre aportado, Edad aportada, Motivo del fallo
-                escritor_err.writerows(errores_detectados)
-            print(
-                f"   -> Los datos corruptos se movieron a '{ARCHIVO_ERRORES}'."
-            )
+        if usuarios_buenos_carga:
+            with open(ruta_correctos, "w", newline="", encoding="utf-8") as archivo_corr:
+                escritor_corr = csv.writer(archivo_corr)
+                for u in usuarios_buenos_carga:
+                    escritor_corr.writerow([u["nombre"], u["edad"], u["fecha"]])
+            print(f"Registros validos guardados en: '{ruta_correctos}' ({len(usuarios_buenos_carga)} usuarios)")
+            
+            usuarios_actuales.extend(usuarios_buenos_carga)
         else:
-            print("✅ El archivo fue leído y no contenía ningún error.")
+            print("Info: No se encontraron registros validos para exportar.")
 
+        if errores_detectados:
+            with open(ruta_errores, "w", newline="", encoding="utf-8") as archivo_err:
+                escritor_err = csv.writer(archivo_err)
+                escritor_err.writerow(["Nombre Aportado", "Edad Aportada", "Motivo del Fallo"])
+                escritor_err.writerows(errores_detectados)
+            print(f"Registros corruptos aislados en: '{ruta_errores}' ({len(errores_detectados)} errores)")
+        else:
+            print("Confirmacion: Cero inconsistencias detectadas en este archivo.")
+
+    except PermissionError:
+        print(f"Error: Permisos insuficientes para leer o escribir los archivos de auditoria.")
     except Exception as e:
-        print(f"💥 Ocurrió un error al procesar el archivo: {e}")
-
-    return usuarios_buenos
+        print(f"Ocurrio un error inesperado al segregar los datos: {e}")
 
 
-def guardar_csv(usuarios):
+def guardar_txt(usuarios):
     if len(usuarios) == 0:
         print("No hay usuarios para guardar.")
         return
 
+    nombre_salida = input("Ingrese el nombre del archivo para exportar la memoria actual (ej: copia.txt): ").strip()
+    if nombre_salida == "":
+        print("Error: El nombre del archivo no puede estar vacío.")
+        return
+
     try:
-        with open(ARCHIVO, "w", newline="", encoding="utf-8") as archivo:
+        with open(nombre_salida, "w", newline="", encoding="utf-8") as archivo:
             escritor = csv.writer(archivo)
-
-            # Guardamos los 3 campos: Nombre, Edad, FechaRegistro
             for usuario in usuarios:
-                escritor.writerow(
-                    [usuario["nombre"], usuario["edad"], usuario["fecha"]]
-                )
+                escritor.writerow([usuario["nombre"], usuario["edad"], usuario["fecha"]])
 
-        print(f"¡Excelente! Información guardada en '{ARCHIVO}' correctamente.")
+        print(f"¡Excelente! Información exportada en '{nombre_salida}' correctamente.")
     except Exception as e:
         print(f"Error al escribir en el archivo: {e}")
 
 
 def mostrar_menu():
-    print("\n===== SISTEMA DE REGISTRO CSV =====")
-    print("1. Registrar usuario (Memoria)")
+    print("\n===== SISTEMA DE GESTIÓN Y AUDITORÍA DE ARCHIVOS TXT =====")
+    print("1. Registrar usuario manualmente (Memoria)")
     print("2. Mostrar usuarios en memoria")
     print("3. Buscar usuarios")
-    print("4. Guardar información en CSV")
-    print("5. Terminar el programa")
+    print("4. Ordenar o Eliminar usuarios (Memoria)")
+    print("5. Calcular la edad promedio de los usuarios (NUEVO)")
+    print("6. Cargar y validar archivo (.txt)")
+    print("7. Exportar memoria actual a un archivo personalizado")
+    print("8. Terminar el programa")
 
 
 def ejecutar_programa():
-    # MODIFICACIÓN: Al arrancar, lee el archivo, lo valida y separa lo bueno de lo malo
-    usuarios = validar_y_cargar_desde_archivo()
+    usuarios = []
     opcion = ""
 
-    while opcion != "5":
+    while opcion != "8":
         mostrar_menu()
         opcion = input("Seleccione una opción: ").strip()
 
@@ -224,8 +288,14 @@ def ejecutar_programa():
         elif opcion == "3":
             buscar_usuario(usuarios)
         elif opcion == "4":
-            guardar_csv(usuarios)
+            gestionar_memoria(usuarios)
         elif opcion == "5":
+            calcular_edad_promedio(usuarios)
+        elif opcion == "6":
+            cargar_y_segregar_archivo(usuarios)
+        elif opcion == "7":
+            get_nombre = guardar_txt(usuarios)
+        elif opcion == "8":
             print("Programa finalizado con éxito.")
         else:
             print("Opción inválida. Intente nuevamente.")
